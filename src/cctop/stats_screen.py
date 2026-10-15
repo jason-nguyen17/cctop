@@ -217,7 +217,7 @@ def build_provider_stats(accounts) -> list[tuple[str, FleetStats]]:
     from . import codex_stats
 
     result = []
-    claude = [a for a in accounts if a.provider != "codex"]
+    claude = [a for a in accounts if a.provider not in ("codex", "omp")]
     codex = [a for a in accounts if a.provider == "codex"]
     if claude:
         result.append(("Claude", stats_mod.build_fleet_stats(claude)))

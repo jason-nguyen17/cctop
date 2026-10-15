@@ -98,7 +98,7 @@ class FleetMonitor:
         states: list[SessionState] = []
         seen: set[str] = set()
         for account in self.accounts:
-            if account.provider == "codex":
+            if account.provider in ("codex", "omp"):
                 if codex_due:
                     self._codex_cache[account.name] = codex_session_states(account, now)
                 states.extend(self._codex_cache.get(account.name, []))

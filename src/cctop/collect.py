@@ -44,7 +44,7 @@ class Account:
     """A named account backed by its own config directory.
 
     `provider` selects how sessions and limits are read: "claude" (the default)
-    or "codex".
+    or "codex"; "omp" monitors Codex-backed OMP sessions.
     """
 
     name: str
@@ -70,7 +70,9 @@ def _looks_like_config_dir(path: Path) -> bool:
 
 
 def _provider_for(config_dir: Path) -> str:
-    """Infer the provider from a config dir path (codex vs claude)."""
+    """Infer native and OMP providers from their conventional config paths."""
+    if config_dir.name == "agent" and config_dir.parent.name == ".omp":
+        return "omp"
     return "codex" if "codex" in config_dir.name.lower() else "claude"
 
 
@@ -103,6 +105,10 @@ def discover_accounts() -> list[Account]:
     codex_dir = home / ".codex"
     if (codex_dir / "sessions").is_dir() or (codex_dir / "auth.json").exists():
         accounts.append(Account("cx-0", codex_dir, provider="codex"))
+
+    omp_dir = home / ".omp" / "agent"
+    if (omp_dir / "sessions").is_dir():
+        accounts.append(Account("omp", omp_dir, provider="omp"))
 
     return accounts
 
@@ -204,22 +210,20 @@ def _state_for_session(
 
 
 def codex_session_states(account: Account, now: datetime) -> list[SessionState]:
-    """Adapt live Codex sessions into the shared SessionState shape."""
-    from . import codex
+    """Adapt native and OMP Codex sessions into the shared SessionState shape."""
+    from . import codex, omp
 
+    discover = omp.discover_sessions if account.provider == "omp" else codex.discover_sessions
     states = []
-    for codex_session in codex.discover_sessions():
-        recent = codex_session.last_activity is not None and (
-            now - codex_session.last_activity < timedelta(minutes=2)
-        )
-        status = SessionStatus.GENERATING if recent else SessionStatus.IDLE
+    for codex_session in discover(account.config_dir):
+        status = codex_session.status
         session = Session(
             pid=codex_session.pid,
             session_id=codex_session.session_id,
             cwd=codex_session.cwd,
             name=codex_session.name,
-            raw_status="",
-            kind="codex",
+            raw_status=status.value,
+            kind="omp" if account.provider == "omp" else "codex",
             version="",
             started_at=None,
             updated_at=codex_session.last_activity,
@@ -250,6 +254,15 @@ def codex_session_states(account: Account, now: datetime) -> list[SessionState]:
 
 def account_limits(account: Account) -> AccountLimits:
     """Fetch an account's usage limits via the right provider (free)."""
+    if account.provider == "omp":
+        return AccountLimits(
+            account.name,
+            None,
+            [],
+            "none",
+            None,
+            error="OMP Codex sessions; account quota unavailable",
+        )
     if account.provider == "codex":
         from . import codex_usage
 
@@ -281,7 +294,7 @@ def build_snapshot(
 
     states: list[SessionState] = []
     for account in accounts:
-        if account.provider == "codex":
+        if account.provider in ("codex", "omp"):
             states.extend(codex_session_states(account, now))
             continue
         for session in read_registry(account.config_dir):

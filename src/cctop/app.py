@@ -36,6 +36,7 @@ from .cli import (
     _format_model,
     _format_reset,
     _format_tokens,
+    _session_status_label,
     _short_cwd,
     _tier_label,
 )
@@ -305,7 +306,7 @@ class CctopApp(App):
             table.add_row(
                 state.account,
                 state.session.name or session_id[:8],
-                Text(state.status.value, style=style),
+                Text(_session_status_label(state), style=style),
                 _format_model(state.model),
                 _short_cwd(state.session.cwd),
                 _format_context(state),
@@ -348,7 +349,7 @@ class CctopApp(App):
             gap,
             (state.account, MUTED),
             gap,
-            (state.status.value, MUTED),
+            (_session_status_label(state), MUTED),
             gap,
             (f"pid {session.pid}", MUTED),
         ]

@@ -32,6 +32,16 @@ _STATUS_DISPLAY: dict[SessionStatus, tuple[str, str]] = {
 }
 
 
+def _session_status_label(state: SessionState) -> str:
+    """Codex lifecycle labels, retaining the shared status values for JSON."""
+    if state.session.kind in ("codex", "omp"):
+        if state.status is SessionStatus.GENERATING:
+            return "working"
+        if state.status is SessionStatus.WAITING_PERMISSION:
+            return "waiting"
+    return state.status.value
+
+
 def _format_age(moment: datetime | None, now: datetime) -> str:
     """A compact relative age like "12s", "5m", "3h" for a past timestamp."""
     if moment is None:
@@ -166,6 +176,8 @@ def _render_table(snapshot: FleetSnapshot, multi_account: bool) -> Table:
 
     for state in snapshot.sessions:
         label, style = _STATUS_DISPLAY[state.status]
+        if state.session.kind in ("codex", "omp"):
+            label = _session_status_label(state)
         row = [
             state.session.name or state.session.session_id[:8],
             f"[{style}]{label}[/{style}]",
@@ -262,6 +274,17 @@ def _cmd_accounts() -> None:
     table.add_column("live", justify="right")
 
     for account in default_accounts():
+        if account.provider == "omp":
+            from . import omp
+
+            table.add_row(
+                account.name,
+                str(account.config_dir).replace(str(Path.home()), "~"),
+                "-",
+                "-",
+                str(len(omp.discover_sessions(account.config_dir))),
+            )
+            continue
         tier = _tier_label(usage.read_tier(account.config_dir)) or "-"
         has_token = usage.get_token(account.config_dir) is not None
         live = sum(1 for _ in read_registry(account.config_dir))
@@ -311,6 +334,19 @@ def _cmd_doctor(accounts: list[Account] | None = None) -> None:
 
     for account in accounts:
         config_display = str(account.config_dir).replace(str(Path.home()), "~")
+        if account.provider == "omp":
+            from . import omp
+
+            table.add_row(
+                account.name,
+                "omp",
+                config_display,
+                "-",
+                "-",
+                "-",
+                str(len(omp.discover_sessions(account.config_dir))),
+            )
+            continue
         if account.provider == "codex":
             has_token = (CODEX_DIR / "auth.json").exists()
             table.add_row(
