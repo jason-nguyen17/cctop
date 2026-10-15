@@ -43,6 +43,7 @@ from .cli import (
 from .collect import Account
 from .models import AccountLimits, LimitWindow, SessionState
 from .monitor import FleetMonitor
+from .stats import FleetStats
 
 TEAL = "#20B2AA"
 DIM = "grey37"
@@ -54,19 +55,25 @@ _STATUS_STYLE = {
     "shell": "white",
     "generating": TEAL,
     "waiting_permission": "red",
-    "stale": DIM,
+    "stale": MUTED,
     "dead": "red",
-    "unknown": DIM,
+    "unknown": MUTED,
 }
 
 _COLUMNS = ("acct", "name", "status", "model", "cwd", "ctx", "tokens", "cost", "age")
 
 
 def _fit(text: str, width: int) -> str:
-    """Pad to width, or truncate with an ellipsis if longer."""
-    if len(text) <= width:
-        return f"{text:<{width}}"
-    return text[: width - 1] + "…"
+    """Fit terminal cells, including wide Unicode characters."""
+    rendered = Text(text)
+    rendered.truncate(max(0, width), overflow="ellipsis", pad=True)
+    return rendered.plain
+
+
+def _cell(value: str, width: int, style: str = "") -> Text:
+    rendered = Text(value, style=style, no_wrap=True, overflow="ellipsis")
+    rendered.truncate(max(0, width), overflow="ellipsis")
+    return rendered
 
 
 def _bar(fraction: float, width: int) -> Text:
@@ -113,49 +120,47 @@ def _account_block(
     return Group(*lines)
 
 
-# Rough character budget for one account block (label + bar + % + reset), used
-# to decide how many fit per row before wrapping to the next.
-_USAGE_BLOCK = 40
-
-
 def _render_usage(
-    limits: list[AccountLimits], now: datetime, width: int | None = None
+    limits: list[AccountLimits],
+    now: datetime,
+    width: int | None = None,
+    source_only_names: set[str] | None = None,
 ) -> RichTable:
-    """Account blocks laid out in a grid that wraps to more rows as needed.
-
-    How many share a row is chosen from the available width (so it reflows on
-    resize) capped at the account count; bars widen when few share a row. Past
-    that many accounts, the rest wrap onto further rows rather than overflowing.
-    """
-    count = max(1, len(limits))
-    if not width or width <= 0:
-        per_row = count if count <= 3 else 3
-    else:
-        per_row = max(1, min(count, width // _USAGE_BLOCK))
-
-    label_width = 13 if per_row <= 2 else 11 if per_row == 3 else 9
-    pad = 8 if per_row <= 2 else 6 if per_row == 3 else 4
-    if width and width > 0:
-        # Size the bar to fill each column (label + bar + ~15 for %/marker/reset),
-        # so bars never overrun the column and wrap.
-        column = (width - (per_row - 1) * pad) // per_row
-        bar_width = max(6, min(BAR_WIDTH, column - label_width - 15))
-    else:
-        bar_width = BAR_WIDTH if per_row <= 2 else 12 if per_row == 3 else 9
-
-    grid = RichTable.grid(padding=(0, pad))
+    """Equal-width quota cards with a separate compact source-only notice."""
+    width = max(20, width or 120)
+    source_only_names = source_only_names or set()
+    sources = [
+        account
+        for account in limits
+        if account.account in source_only_names
+        and account.source == "none"
+        and account.error == "OMP Codex sessions; account quota unavailable"
+    ]
+    quotas = [account for account in limits if account not in sources]
+    count = len(quotas)
+    per_row = max(1, min(count, width // 34))
+    gap = 3
+    column = max(1, (width - (per_row - 1) * gap) // per_row)
+    label_width = min(11, max(6, column // 4))
+    bar_width = max(4, min(BAR_WIDTH, column - label_width - 17))
+    cards = RichTable.grid(padding=(0, gap), expand=True)
     for _ in range(per_row):
-        grid.add_column()
-
-    blank = Text("")
-    rows = -(-count // per_row)  # ceil
-    for row in range(rows):
-        if row:
-            grid.add_row(*([blank] * per_row))  # a blank line between rows
-        chunk = list(limits[row * per_row : (row + 1) * per_row])
-        cells: list = [_account_block(a, now, bar_width, label_width) for a in chunk]
-        cells += [blank] * (per_row - len(cells))  # pad the last partial row
-        grid.add_row(*cells)
+        cards.add_column(ratio=1, width=column)
+    for start in range(0, count, per_row):
+        chunk = quotas[start : start + per_row]
+        cells: list = [_account_block(account, now, bar_width, label_width) for account in chunk]
+        cells += [Text("")] * (per_row - len(cells))
+        cards.add_row(*cells)
+    grid = RichTable.grid(expand=True)
+    grid.add_column(ratio=1)
+    if quotas:
+        grid.add_row(cards)
+    if sources:
+        names = ", ".join(account.account for account in sources)
+        note = Text.assemble((names, TEAL), (" · OMP sessions only; quota unavailable", MUTED))
+        note.no_wrap = True
+        note.overflow = "ellipsis"
+        grid.add_row(note)
     return grid
 
 
@@ -191,16 +196,16 @@ class CctopApp(App):
     #sessions-box {{
         border: round {TEAL};
         border-title-color: {TEAL};
-        height: 2fr;
+        height: 1fr;
         padding: 0 1;
     }}
     #sessions-box DataTable {{ height: 1fr; }}
     #sessions-box Rule {{ color: {TEAL} 30%; margin: 0; height: 1; }}
-    #detail {{ height: auto; }}
+    #detail {{ height: 3; }}
     #stats-box {{
         border: round {TEAL};
         border-title-color: {TEAL};
-        height: 3fr;
+        height: auto;
         padding: 0 1;
     }}
     #footer {{ height: 1; padding: 0 1; color: #808080; }}
@@ -234,6 +239,7 @@ class CctopApp(App):
         self._limits_timer: Timer | None = None
         self._states_by_id: dict[str, SessionState] = {}
         self._selected_session_id: str | None = None
+        self._provider_stats: list[tuple[str, FleetStats]] = []
 
     def compose(self) -> ComposeResult:
         yield Static(id="topbar")
@@ -267,23 +273,39 @@ class CctopApp(App):
 
     @work(thread=True, exclusive=True, group="stats")
     def _tick_stats(self) -> None:
-        from .stats_screen import (
-            build_provider_stats,
-            render_heatmaps_row,
-            render_stats_table,
-        )
+        from .stats_screen import build_provider_stats
 
-        today = date.today()
         provider_stats = build_provider_stats(self.monitor.accounts)
+        self.call_from_thread(self._render_stats, provider_stats)
 
-        parts: list = []
-        if provider_stats:
-            parts.append(render_stats_table(provider_stats))
-            parts.append(Text())
-            parts.append(render_heatmaps_row(provider_stats, today, weeks=self._heatmap_weeks))
-        content = Group(*parts) if parts else Text("no stats", style=MUTED)
-
-        self.call_from_thread(lambda: self.query_one("#stats", Static).update(content))
+    def _render_stats(self, provider_stats: list[tuple[str, FleetStats]]) -> None:
+        self._provider_stats = provider_stats
+        lines = []
+        width = max(1, self.query_one("#stats", Static).size.width or self.size.width - 4)
+        for label, stats in provider_stats:
+            if not stats.days and not stats.total_messages:
+                summary = (
+                    f" · {stats.total_sessions:,} sessions · no daily activity recorded"
+                    if stats.total_sessions
+                    else " · no activity recorded"
+                )
+                line = Text.assemble((label, f"bold {TEAL}"), (summary, MUTED))
+            else:
+                line = Text.assemble(
+                    (label, f"bold {TEAL}"),
+                    (
+                        f"  {stats.total_sessions:,} sessions · {stats.total_messages:,} messages"
+                        f" · {_format_tokens(sum(stats.model_tokens.values()))} tokens",
+                        "default",
+                    ),
+                )
+            lines.append(_cell(line.plain, width, MUTED) if line.cell_len > width else line)
+        content = (
+            Group(*lines)
+            if lines
+            else Text("No activity history · s opens statistics", style=MUTED)
+        )
+        self.query_one("#stats", Static).update(content)
 
     # -- session polling (fast, free, file-only) -------------------------------
 
@@ -298,31 +320,52 @@ class CctopApp(App):
         self._states_by_id = {s.session.session_id: s for s in states}
 
         table = self.query_one("#sessions", DataTable)
-        table.clear()
-        selected_index = None
-        for index, state in enumerate(states):
-            style = _STATUS_STYLE.get(state.status.value, "white")
-            session_id = state.session.session_id
-            table.add_row(
-                state.account,
-                state.session.name or session_id[:8],
-                Text(_session_status_label(state), style=style),
-                _format_model(state.model),
-                _short_cwd(state.session.cwd),
-                _format_context(state),
-                _format_tokens(state.totals.total_tokens),
-                _format_cost(state.totals.cost_usd),
-                _format_age(state.last_activity, now),
-                key=session_id,
-            )
-            if session_id == self._selected_session_id:
-                selected_index = index
-
-        # Keep the cursor on the same session across the 1s rebuild instead of
-        # snapping back to the top.
-        if selected_index is not None:
-            table.move_cursor(row=selected_index, animate=False)
-
+        available = max(1, self.size.width - 6)
+        columns = list(_COLUMNS if available >= 105 else _COLUMNS[:-2])
+        fixed = {"acct": 5, "status": 7, "model": 12, "ctx": 6, "tokens": 7, "cost": 7, "age": 5}
+        flexible = max(
+            2,
+            available
+            - 2 * len(columns)
+            - sum(fixed.values())
+            + (fixed["cost"] + fixed["age"] if "cost" not in columns else 0),
+        )
+        widths = dict(fixed, name=max(1, flexible * 45 // 100))
+        widths["cwd"] = max(1, flexible - widths["name"])
+        selected = self._selected_session_id
+        if selected not in self._states_by_id:
+            selected = states[0].session.session_id if states else None
+        with table.prevent(DataTable.RowHighlighted):
+            table.clear(columns=True)
+            for column in columns:
+                table.add_column(column, key=column, width=widths[column])
+            selected_index = 0
+            for index, state in enumerate(states):
+                session_id = state.session.session_id
+                style = _STATUS_STYLE.get(state.status.value, "white")
+                values = {
+                    "acct": state.account,
+                    "name": state.session.name or session_id[:8],
+                    "status": _session_status_label(state),
+                    "model": _format_model(state.model),
+                    "cwd": _short_cwd(state.session.cwd),
+                    "ctx": _format_context(state),
+                    "tokens": _format_tokens(state.totals.total_tokens),
+                    "cost": _format_cost(state.totals.cost_usd),
+                    "age": _format_age(state.last_activity, now),
+                }
+                table.add_row(
+                    *[
+                        _cell(values[column], widths[column], style if column == "status" else "")
+                        for column in columns
+                    ],
+                    key=session_id,
+                )
+                if session_id == selected:
+                    selected_index = index
+            if states:
+                table.move_cursor(row=selected_index, animate=False)
+        self._selected_session_id = selected
         self._render_detail(now)
         self._render_footer(states, now)
 
@@ -336,46 +379,46 @@ class CctopApp(App):
         widget = self.query_one("#detail", Static)
         if state is None:
             widget.update(Text("", style=MUTED))
+            widget.tooltip = None
             return
 
         session = state.session
         totals = state.totals
         ctx = state.context
-        ctx_text = f"{ctx.used_tokens:,} / {ctx.window_tokens:,}" if ctx is not None else "-"
-        gap = ("   ", "default")
-
-        title_parts = [
-            (session.name or session.session_id[:8], f"bold {TEAL}"),
-            gap,
-            (state.account, MUTED),
-            gap,
-            (_session_status_label(state), MUTED),
-            gap,
-            (f"pid {session.pid}", MUTED),
-        ]
-        if session.version:
-            title_parts += [gap, (f"v{session.version}", MUTED)]
-        title_parts += [gap, (_short_cwd(session.cwd), MUTED)]
-
-        tokens = (
-            f"in {_format_tokens(totals.input_tokens)} · "
-            f"out {_format_tokens(totals.output_tokens)} · "
-            f"cache r {_format_tokens(totals.cache_read_tokens)} "
-            f"w {_format_tokens(totals.cache_creation_tokens)}"
+        width = max(1, self.size.width - 4)
+        context = (
+            f"{_format_tokens(ctx.used_tokens)}/{_format_tokens(ctx.window_tokens)}"
+            if ctx is not None
+            else "—"
         )
-        wide = ("      ", "default")
-        usage_line = Text.assemble(
-            ("tokens ", MUTED),
-            (tokens, "default"),
-            wide,
-            ("cost ", MUTED),
-            (_format_cost(totals.cost_usd), "default"),
-            wide,
-            ("context ", MUTED),
-            (ctx_text, "default"),
+        summary = (
+            f"ctx {context} · {_format_tokens(totals.total_tokens)} tokens · "
+            f"{_format_cost(totals.cost_usd)} · {_format_age(state.last_activity, now)} ago"
+            f" · pid {session.pid}"
         )
-
-        widget.update(Group(Text.assemble(*title_parts), usage_line))
+        if width >= 120:
+            summary += (
+                f" · in {_format_tokens(totals.input_tokens)}"
+                f" out {_format_tokens(totals.output_tokens)}"
+                f" cache {_format_tokens(totals.cache_read_tokens)}"
+                f"/{_format_tokens(totals.cache_creation_tokens)}"
+            )
+        model = state.model or "unknown model"
+        version = f" · v{session.version}" if session.version else ""
+        identity = f"{model}{version} · "
+        if Text(identity + summary).cell_len <= width:
+            summary = identity + summary
+        name = session.name or session.session_id[:8]
+        widget.tooltip = Text(
+            f"{state.account} · {model}{version}\n{name}\n{session.cwd}",
+        )
+        widget.update(
+            Group(
+                _cell(f"{state.account} · {name}", width, f"bold {TEAL}"),
+                _cell(_short_cwd(session.cwd), width, MUTED),
+                _cell(summary, width, MUTED),
+            )
+        )
 
     def _render_topbar(self, now: datetime) -> None:
         names = "  ".join(account.name for account in self.monitor.accounts)
@@ -397,15 +440,20 @@ class CctopApp(App):
         fetched = self.monitor.limits_fetched_at
         age = f"updated {_format_age(fetched, now)} ago" if fetched else "no data yet"
         nxt = _format_next_refresh(fetched, self._limits_interval, now)
-        footer = Text.assemble(
-            (
+        width = max(1, self.size.width - 2)
+        if width >= 145:
+            hints = "/ search · r refresh · R token · a add · s stats · , settings · q quit"
+            summary = (
                 f"{len(states)} sessions · {_format_tokens(total_tokens)} tokens · "
-                f"${total_cost:,.0f}",
-                "default",
-            ),
-            (f"      usage {age} · {nxt}", MUTED),
-            ("      / search · r refresh · R token · a add · s stats · , settings · q quit", MUTED),
-        )
+                f"${total_cost:,.0f}   usage {age} · {nxt}"
+            )
+        else:
+            hints = "/ search · r refresh · s stats · q quit"
+            summary = f"{len(states)} sessions · {_format_tokens(total_tokens)} tokens"
+        footer = RichTable.grid(expand=True)
+        footer.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
+        footer.add_column(justify="right", width=Text(hints).cell_len, no_wrap=True)
+        footer.add_row(Text(summary, style=MUTED), Text(hints, style=MUTED))
         self.query_one("#footer", Static).update(footer)
 
     # -- limits polling (slow, free, networked) --------------------------------
@@ -569,8 +617,15 @@ class CctopApp(App):
 
     def _render_limits(self, limits: list[AccountLimits], now: datetime) -> None:
         usage = self.query_one("#usage", Static)
-        width = usage.size.width or self.size.width
-        content = _render_usage(limits, now, width) if limits else Text("no accounts", style=MUTED)
+        width = max(1, self.size.width - 4)
+        source_only = {
+            account.name for account in self.monitor.accounts if account.provider == "omp"
+        }
+        content = (
+            _render_usage(limits, now, width, source_only)
+            if limits
+            else Text("no accounts", style=MUTED)
+        )
         usage.update(content)
 
         for notice in self.monitor.pop_auth_notices():
@@ -580,7 +635,11 @@ class CctopApp(App):
                 self.notify(notice, title="token refresh", timeout=6)
 
     def on_resize(self, event) -> None:
-        # Re-lay the usage panel to the new width so accounts reflow/wrap live,
-        # not just on the next limits poll.
+        self.call_after_refresh(self._resize_content)
+
+    def _resize_content(self) -> None:
+        now = datetime.now(timezone.utc)
         if self.monitor.limits:
-            self._render_limits(self.monitor.limits, datetime.now(timezone.utc))
+            self._render_limits(self.monitor.limits, now)
+        self._render_sessions(list(self._states_by_id.values()), now)
+        self._render_stats(self._provider_stats)
