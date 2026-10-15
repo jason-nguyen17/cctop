@@ -76,8 +76,13 @@ cctop add-account     # provision a new account (dry-run; see Accounts below)
 ```
 
 TUI keys: `/` search history · `r` refresh now · `R` refresh token · `a` add
-account · `s` stats · `,` settings · `q` quit. The footer shows a live countdown
-to the next auto refresh; `r` refreshes immediately and resets it.
+account · `s` stats · `,` settings · `q` quit. On wide terminals the footer
+also shows the next auto refresh; `r` refreshes immediately and resets it.
+
+The dashboard gives live sessions most of the space, with a compact statistics
+summary below. Press `s` for full heatmaps and statistics. Columns adapt to the
+terminal width; selected details and their tooltip retain the full session
+identity when names or paths are shortened in the table.
 
 ### History search (`/`, `cctop search`)
 
@@ -176,7 +181,7 @@ written to it unless you run `config init`.
 
 | Data | Claude source | Codex source | Cost |
 |---|---|---|---|
-| Live sessions | `~/.claude*/sessions/<pid>.json` | `ps` + `~/.codex/sessions/` rollouts | free (file/ps) |
+| Live sessions | `~/.claude*/sessions/<pid>.json` | `ps` + process-owned rollout files (CLI and Desktop) | free (file/ps) |
 | Tokens / context | transcript JSONL, tailed | rollout `token_count` events | free (file) |
 | Usage limits | `GET /api/oauth/usage` (Keychain token) | `GET chatgpt.com/backend-api/codex/usage` (`~/.codex/auth.json` token) | free (GET) |
 | Statistics | `~/.claude*/stats-cache.json` | aggregated from rollout files | free (file) |
@@ -190,6 +195,53 @@ automatically when present. Usage windows and stats are read per provider (they
 differ in shape: Codex exposes primary/secondary windows plus per-model limits,
 and its stats come from rollout files rather than a stats cache). Codex sessions
 show token/context but no dollar cost, since Codex is subscription-based.
+
+### Codex live sessions
+
+The live table includes CLI sessions and loaded Desktop/app-server threads with
+observable rollout ownership. One app-server can own several rows. A process or
+a historical thread in SQLite alone does not prove a session is loaded; cctop
+does not pick a historical session just because its project directory matches.
+
+Codex labels are `working` (an unfinished turn), `idle` (a completed or aborted
+turn), `waiting` (an outstanding recorded user-input request), and `unknown`
+(insufficient lifecycle data). Approval and permission requests are usually
+not persisted by Codex, so a session blocked on approval can still read
+`working`. These labels describe the latest recorded lifecycle, not a guarantee
+of current runtime activity. JSON retains the shared `generating` and
+`waiting_permission` status values for compatibility.
+
+Discovery supports Linux `/proc` and macOS `lsof`. It needs permission to inspect
+the agent process and read its rollout files; missing visibility can omit a
+session. Read-only history viewers do not make a session live. Each configured
+Codex account is restricted to its own session directory. For an SSH host, run
+cctop on that host. Use `cctop --once --no-limits` to check sessions without
+credential or network access. Run `cctop` for the live table with usage limits.
+
+Model and token/context values appear when the rollout records them. Cached
+input is already included in input tokens and is not added a second time.
+See [the discovery implementation](src/cctop/codex.py) and
+[its regression tests](tests/test_codex.py) for the supported evidence.
+
+### Codex through OMP
+
+OMP can run Codex models without starting the native `codex` executable. These
+sessions use a separate format and directory. The live monitor auto-detects
+`~/.omp/agent/sessions` as an `omp` source and includes writable, process-owned
+parent and child sessions whose current provider is `openai-codex`. Session
+model changes are respected; selecting another provider removes that row from
+this Codex-only source.
+
+OMP sessions have a separate source label because their login cannot be assumed
+to match `cx-0`. cctop does not read OMP credentials or attribute native Codex
+quota to them. OMP history search, resume and activity statistics are not
+included. Lifecycle labels reflect recorded evidence; an unfinished tool call
+does not prove that the model is currently streaming. Context is shown only
+when a recorded usage/window reading is available.
+
+See [the OMP adapter](src/cctop/omp.py) and
+[its contract tests](tests/test_omp.py). After upgrading a running cctop, restart
+it so the new source is discovered.
 
 The credential for the usage read is resolved per account from the macOS
 Keychain service `Claude Code-credentials-<sha256(config_dir)[:8]>`, used only to
