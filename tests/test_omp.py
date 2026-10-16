@@ -151,12 +151,11 @@ def test_monitor_routes_omp_without_native_quota_or_auth_and_renders(tmp_path, m
         app = CctopApp([account])
         async with app.run_test():
             app._render_sessions(snapshot.sessions, NOW)
-            cell = app.query_one("#sessions", DataTable).get_cell(
-                state.session.session_id, "status"
-            )
-            return cell.plain
+            table = app.query_one("#sessions", DataTable)
+            assert "status" not in {key.value for key in table.columns}
+            return table.get_cell(state.session.session_id, "name").plain
 
-    assert asyncio.run(render_table()) == "working"
+    assert asyncio.run(render_table()) == "current"
     with path.open("a") as handle:
         handle.write(_message(stop="stop"))
     assert monitor.snapshot(NOW + timedelta(seconds=6)).sessions[0].status is SessionStatus.IDLE

@@ -60,7 +60,7 @@ _STATUS_STYLE = {
     "unknown": MUTED,
 }
 
-_COLUMNS = ("acct", "name", "status", "model", "cwd", "ctx", "tokens", "cost", "age")
+_COLUMNS = ("acct", "name", "model", "cwd", "ctx", "tokens", "cost", "age")
 
 
 def _fit(text: str, width: int) -> str:
@@ -322,7 +322,7 @@ class CctopApp(App):
         table = self.query_one("#sessions", DataTable)
         available = max(1, self.size.width - 6)
         columns = list(_COLUMNS if available >= 105 else _COLUMNS[:-2])
-        fixed = {"acct": 5, "status": 7, "model": 12, "ctx": 6, "tokens": 7, "cost": 7, "age": 5}
+        fixed = {"acct": 5, "model": 12, "ctx": 6, "tokens": 7, "cost": 7, "age": 5}
         flexible = max(
             2,
             available
