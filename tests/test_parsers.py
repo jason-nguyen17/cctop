@@ -15,7 +15,7 @@ from pathlib import Path
 from cctop import codex_usage, pricing
 from cctop.registry import process_alive, read_registry
 from cctop.transcript import TranscriptTailer, find_transcript
-from cctop.usage import parse_windows
+from cctop.usage import parse_windows, read_tier
 
 # -- registry ------------------------------------------------------------------
 
@@ -197,6 +197,23 @@ def test_parse_windows_no_data_and_percent_guard() -> None:
     assert windows[0].has_data is False  # never started
     assert windows[1].has_data is False and windows[1].percent == 0.0  # guarded
     assert windows[2].has_data is True and windows[2].percent == 100.0  # clamped
+
+
+def test_read_tier_default_account_uses_home_claude_json(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    # Partial copy in the dir (no tier); Claude Code's real file is ~/.claude.json.
+    (tmp_path / ".claude" / ".claude.json").write_text('{"oauthAccount": {}}')
+    (tmp_path / ".claude.json").write_text(
+        '{"oauthAccount": {"organizationRateLimitTier": "default_claude_max_20x"}}'
+    )
+    other = tmp_path / ".claude-personal"
+    other.mkdir()
+    (other / ".claude.json").write_text(
+        '{"oauthAccount": {"organizationRateLimitTier": "default_claude_max_5x"}}'
+    )
+    assert read_tier(tmp_path / ".claude") == "default_claude_max_20x"
+    assert read_tier(other) == "default_claude_max_5x"
 
 
 # -- Codex usage JSON ----------------------------------------------------------

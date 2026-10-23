@@ -30,14 +30,30 @@ OAUTH_BETA = "oauth-2025-04-20"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
+def _identity_files(config_dir: Path) -> list[Path]:
+    """Where an account's .claude.json may live, most authoritative first.
+
+    Without CLAUDE_CONFIG_DIR, Claude Code keeps the default account's identity
+    in ~/.claude.json, not ~/.claude/.claude.json; the latter can exist as a
+    partial copy (no tier) when something ran with CLAUDE_CONFIG_DIR=~/.claude.
+    """
+    files = [config_dir / ".claude.json"]
+    if config_dir == Path.home() / ".claude":
+        files.insert(0, Path.home() / ".claude.json")
+    return files
+
+
 def _oauth_account(config_dir: Path) -> dict:
     """The oauthAccount block from an account's .claude.json (identifiers only)."""
-    try:
-        record = json.loads((config_dir / ".claude.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    account = record.get("oauthAccount")
-    return account if isinstance(account, dict) else {}
+    for path in _identity_files(config_dir):
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        account = record.get("oauthAccount") if isinstance(record, dict) else None
+        if isinstance(account, dict):
+            return account
+    return {}
 
 
 def read_tier(config_dir: Path) -> str | None:
