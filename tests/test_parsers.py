@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from cctop import codex_usage, pricing
+from cctop import codex_usage, minimax_usage, pricing
 from cctop.registry import process_alive, read_registry
 from cctop.transcript import TranscriptTailer, find_transcript
 from cctop.usage import parse_windows
@@ -229,3 +229,30 @@ def test_codex_windows_shorten_and_mark_peak() -> None:
     assert labels == ["5h", "week", "Spark 5h"]  # verbose model name shortened
     active = [w for w in windows if w.is_active]
     assert len(active) == 1 and active[0].percent == 60  # peak marked binding
+
+
+def test_minimax_windows_convert_remaining_and_skip_unplanned() -> None:
+    hour = 3_600_000
+    payload = {
+        "model_remains": [
+            {
+                "model_name": "general",
+                "start_time": 0,
+                "end_time": 5 * hour,
+                "current_interval_remaining_percent": 96,
+                "weekly_start_time": 0,
+                "weekly_end_time": 168 * hour,
+                "current_weekly_remaining_percent": 82,
+            },
+            {
+                "model_name": "video",
+                "current_interval_total_count": 0,
+                "current_weekly_total_count": 0,
+                "current_interval_status": 3,
+                "current_weekly_status": 3,
+            },
+        ]
+    }
+    windows = minimax_usage._windows(payload)
+    assert [(w.label, w.percent) for w in windows] == [("5h", 4.0), ("week", 18.0)]
+    assert [w.is_active for w in windows] == [False, True]  # weekly binds at 18%

@@ -285,6 +285,18 @@ def _cmd_accounts() -> None:
                 str(len(omp.discover_sessions(account.config_dir))),
             )
             continue
+        if account.provider == "minimax":
+            from . import minimax_usage
+
+            has_token = minimax_usage._read_auth(account.config_dir) is not None
+            table.add_row(
+                account.name,
+                str(account.config_dir).replace(str(Path.home()), "~"),
+                "token plan",
+                "[green]yes[/green]" if has_token else "[grey50]no[/grey50]",
+                "-",
+            )
+            continue
         tier = _tier_label(usage.read_tier(account.config_dir)) or "-"
         has_token = usage.get_token(account.config_dir) is not None
         live = sum(1 for _ in read_registry(account.config_dir))
@@ -356,6 +368,20 @@ def _cmd_doctor(accounts: list[Account] | None = None) -> None:
                 "[green]yes[/green]" if has_token else "[grey50]no[/grey50]",
                 "-",
                 "-",
+                "-",
+            )
+            continue
+        if account.provider == "minimax":
+            from . import minimax_usage
+
+            has_token = minimax_usage._read_auth(account.config_dir) is not None
+            table.add_row(
+                account.name,
+                "minimax",
+                config_display,
+                "[green]yes[/green]" if has_token else "[grey50]no[/grey50]",
+                "-",
+                "token plan",
                 "-",
             )
             continue

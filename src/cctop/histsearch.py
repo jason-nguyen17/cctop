@@ -116,7 +116,7 @@ def _roots(accounts: list[Account]) -> list[tuple[Account, Path]]:
     """Every transcript root to scan, paired with its owning account."""
     pairs = []
     for account in accounts:
-        if account.provider == "omp":
+        if account.provider in ("omp", "minimax"):
             continue
         if account.provider == "codex":
             for name in ("sessions", "archived_sessions"):
@@ -498,7 +498,7 @@ def _live_session_ids(accounts: list[Account], need_codex: bool) -> set[str]:
 
     live: set[str] = set()
     for account in accounts:
-        if account.provider in ("codex", "omp"):
+        if account.provider in ("codex", "omp", "minimax"):
             continue
         for session in read_registry(account.config_dir):
             if session.session_id and process_alive(session.pid):

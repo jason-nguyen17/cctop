@@ -243,6 +243,18 @@ See [the OMP adapter](src/cctop/omp.py) and
 [its contract tests](tests/test_omp.py). After upgrading a running cctop, restart
 it so the new source is discovered.
 
+### MiniMax CLI
+
+When `~/.mmx/config.json` exists (written by `npm install -g mmx-cli` and
+`mmx auth login`), cctop adds an `mm-0` account showing the M Plan / Token Plan
+5-hour and weekly quota, the same numbers `mmx quota` prints. The read is a free
+`GET /v1/token_plan/remains` authenticated with mmx's own key, which is never
+logged or persisted; pay-as-you-go (`sk-api-`) keys have no plan quota to show.
+`mmx` is an API CLI, not a coding agent, and records no sessions, so this
+account has no rows in the session table. Claude Code or Codex sessions set up
+with `mmx agent setup` still appear under those tools' own accounts. See
+[the MiniMax adapter](src/cctop/minimax_usage.py).
+
 The credential for the usage read is resolved per account from the macOS
 Keychain service `Claude Code-credentials-<sha256(config_dir)[:8]>`, used only to
 authenticate to Anthropic's own API, never logged or persisted. The usage

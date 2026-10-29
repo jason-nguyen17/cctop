@@ -44,7 +44,8 @@ class Account:
     """A named account backed by its own config directory.
 
     `provider` selects how sessions and limits are read: "claude" (the default)
-    or "codex"; "omp" monitors Codex-backed OMP sessions.
+    or "codex"; "omp" monitors Codex-backed OMP sessions; "minimax" reads the
+    MiniMax CLI's Token Plan quota (limits only, no sessions).
     """
 
     name: str
@@ -70,9 +71,11 @@ def _looks_like_config_dir(path: Path) -> bool:
 
 
 def _provider_for(config_dir: Path) -> str:
-    """Infer native and OMP providers from their conventional config paths."""
+    """Infer native, OMP, and MiniMax providers from their conventional config paths."""
     if config_dir.name == "agent" and config_dir.parent.name == ".omp":
         return "omp"
+    if config_dir.name == ".mmx":
+        return "minimax"
     return "codex" if "codex" in config_dir.name.lower() else "claude"
 
 
@@ -109,6 +112,10 @@ def discover_accounts() -> list[Account]:
     omp_dir = home / ".omp" / "agent"
     if (omp_dir / "sessions").is_dir():
         accounts.append(Account("omp", omp_dir, provider="omp"))
+
+    mmx_dir = home / ".mmx"
+    if (mmx_dir / "config.json").exists():
+        accounts.append(Account("mm-0", mmx_dir, provider="minimax"))
 
     return accounts
 
@@ -267,6 +274,10 @@ def account_limits(account: Account) -> AccountLimits:
         from . import codex_usage
 
         return codex_usage.fetch_account_limits(account.name)
+    if account.provider == "minimax":
+        from . import minimax_usage
+
+        return minimax_usage.fetch_account_limits(account.name, account.config_dir)
 
     from . import usage
 
@@ -296,6 +307,8 @@ def build_snapshot(
     for account in accounts:
         if account.provider in ("codex", "omp"):
             states.extend(codex_session_states(account, now))
+            continue
+        if account.provider == "minimax":
             continue
         for session in read_registry(account.config_dir):
             states.append(_state_for_session(session, account, now))

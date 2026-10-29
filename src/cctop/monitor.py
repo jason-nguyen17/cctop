@@ -103,6 +103,8 @@ class FleetMonitor:
                     self._codex_cache[account.name] = codex_session_states(account, now)
                 states.extend(self._codex_cache.get(account.name, []))
                 continue
+            if account.provider == "minimax":
+                continue
             for session in read_registry(account.config_dir):
                 if not process_alive(session.pid):
                     continue
