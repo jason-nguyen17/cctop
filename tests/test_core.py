@@ -91,3 +91,15 @@ def test_next_refresh_countdown() -> None:
     assert _format_next_refresh(now - timedelta(seconds=45), 60, now) == "next in 15s"
     assert _format_next_refresh(now - timedelta(seconds=200), 180, now) == "refreshing"
     assert _format_next_refresh(None, 180, now) == "refreshing"
+
+
+def test_reset_countdown_shows_days_hours_minutes() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from cctop.cli import _format_reset
+
+    now = datetime(2026, 7, 19, 12, 0, 0, tzinfo=timezone.utc)
+    assert _format_reset(now + timedelta(days=6, hours=4, minutes=7), now) == "6d4h7m"
+    assert _format_reset(now + timedelta(days=2), now) == "2d0h0m"
+    assert _format_reset(now + timedelta(hours=4), now) == "4h0m"
+    assert _format_reset(now + timedelta(minutes=56), now) == "56m"
