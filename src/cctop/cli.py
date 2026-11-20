@@ -57,7 +57,7 @@ def _format_age(moment: datetime | None, now: datetime) -> str:
 
 
 def _format_reset(moment: datetime | None, now: datetime) -> str:
-    """A compact countdown to a future reset time like "3h12m", "2d4h7m"."""
+    """A compact countdown to a future reset time like "3h12m", "2d4h"."""
     if moment is None:
         return "?"
     seconds = int((moment - now).total_seconds())
@@ -65,10 +65,9 @@ def _format_reset(moment: datetime | None, now: datetime) -> str:
         return "now"
     if seconds < 3600:
         return f"{seconds // 60}m"
-    hours_minutes = f"{(seconds % 86400) // 3600}h{(seconds % 3600) // 60}m"
     if seconds < 86400:
-        return hours_minutes
-    return f"{seconds // 86400}d{hours_minutes}"
+        return f"{seconds // 3600}h{(seconds % 3600) // 60}m"
+    return f"{seconds // 86400}d{(seconds % 86400) // 3600}h"
 
 
 def _format_tokens(count: int) -> str:
